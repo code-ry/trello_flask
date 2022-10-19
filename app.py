@@ -1,17 +1,21 @@
-from flask import Flask, jsonify
+from flask import Flask, jsonify, request
 from flask_sqlalchemy import SQLAlchemy
-from datetime import date
+from datetime import date, timedelta
 from flask_marshmallow import Marshmallow
 from flask_bcrypt import Bcrypt
+from sqlalchemy.exc import IntegrityError
+from flask_jwt_extended import JWTManager, create_access_token, jwt_required
 
 app = Flask(__name__)
-app.config['JSON_SORT_KEYS'] = False
 
+app.config['JSON_SORT_KEYS'] = False
+app.config['JWT_SECRET_KEY'] = 'hello there'
 app.config['SQLALCHEMY_DATABASE_URI'] = 'postgresql+psycopg2://trello_dev:password123@127.0.0.1:5432/trello'
 
 db = SQLAlchemy(app)
 ma = Marshmallow(app)
 bcrypt = Bcrypt(app)
+jwt = JWTManager(app)
 
 class User(db.Model):
     __tablename__ = 'users'
@@ -24,7 +28,7 @@ class User(db.Model):
 
 class UserSchema(ma.Schema):
     class Meta:
-        fields = ('id', 'name', 'email', 'is_admin')
+        fields = ('id', 'name', 'email', 'password', 'is_admin')
 
 class Card(db.Model):
     __tablename__ = 'cards'
@@ -151,7 +155,42 @@ def count_ongoing():
 
 # Routed result
 
+@app.route('/auth/login/', methods = ['POST'])
+def auth_login():
+
+    # Check if user exists and
+    stmt = db.select(User).filter_by(email=request.json['email'])
+    user = db.session.scalar(stmt)
+    if user and bcrypt.check_password_hash(user.password,request.json['password']):
+        # create token for client to store and use.
+        token = create_access_token(identity= str(user.id), expires_delta=timedelta(days=1))
+        return {'user': user.email, 'token': token, 'is_admin': user.is_admin}
+    else:
+        return {'error': 'Invalid email or password'}, 401
+
+@app.route('/auth/register/', methods=['POST'])
+def auth_register():
+    try:
+        # retrieve data from incoming POST request and parse the JSON
+        # user_info = UserSchema().load(request.json)
+        # Creat new user model instance from the user_info
+        user = User(
+            email = request.json['email'],
+            password = bcrypt.generate_password_hash(request.json['password']).decode('utf-8'),
+            name  = request.json['name']
+        )
+
+        # Add and commit user to DB
+        db.session.add(user)
+        db.session.commit()
+        # Respond to Client DB info and Successful creation Code 201
+        return UserSchema(exclude=['password']).dump(user), 201
+    except IntegrityError:
+        return {'error':'Email address already in use'}, 409
+
+
 @app.route('/cards/')
+@jwt_required()
 def all_cards():
     # select * from cards;
     # stmt = db.select(Card).where(Card.status == 'To Do')
