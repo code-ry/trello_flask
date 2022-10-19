@@ -4,7 +4,7 @@ from datetime import date, timedelta
 from flask_marshmallow import Marshmallow
 from flask_bcrypt import Bcrypt
 from sqlalchemy.exc import IntegrityError
-from flask_jwt_extended import JWTManager, create_access_token, jwt_required
+from flask_jwt_extended import JWTManager, create_access_token, jwt_required, get_jwt_identity
 
 app = Flask(__name__)
 
@@ -192,6 +192,12 @@ def auth_register():
 @app.route('/cards/')
 @jwt_required()
 def all_cards():
+    user_id = get_jwt_identity()
+    stmt = db.select(User).filter_by(id=user_id)
+    user = db.session.scalar(stmt)
+    if not user.is_admin:
+        return {'error':'You must be an admin'}, 401
+    
     # select * from cards;
     # stmt = db.select(Card).where(Card.status == 'To Do')
     # stmt = db.select(Card).filter_by(status= 'To Do')
